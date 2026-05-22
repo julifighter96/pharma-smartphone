@@ -1,0 +1,43 @@
+{
+  "name": "PharmaApp CRM",
+  "short_name": "PharmaApp",
+  "description": "Außendienst CRM für die Pharmaindustrie",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#FFFBFE",
+  "theme_color": "#F57C00",
+  "lang": "de",
+  "icons": [
+    {
+      "src": "icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "categories": ["business", "productivity"],
+  "shortcuts": [
+    {
+      "name": "Heute",
+      "url": "/?view=today",
+      "description": "Tagesübersicht"
+    },
+    {
+      "name": "In der Nähe",
+      "url": "/?view=nearby",
+      "description": "Kunden in der Nähe"
+    },
+    {
+      "name": "Kunden",
+      "url": "/?view=customers",
+      "description": "Kundenliste"
+    }
+  ]
+}
