@@ -1329,23 +1329,28 @@ const App = (() => {
 
   async function processCardScan(input) {
     if (!input.files || !input.files[0]) return;
-    const url = URL.createObjectURL(input.files[0]);
+    const rawUrl = URL.createObjectURL(input.files[0]);
 
     document.getElementById('sc-step1').style.display = 'none';
     document.getElementById('sc-step2').style.display = 'block';
-    document.getElementById('sc-preview-big').src = url;
+    document.getElementById('sc-preview-big').src = rawUrl;
+
+    const setStatus = (title, sub) => {
+      const t = document.getElementById('sc-status-title');
+      const s = document.getElementById('sc-status-sub');
+      if (t) t.textContent = title;
+      if (s) s.textContent = sub;
+    };
 
     try {
+      setStatus('Bild wird vorbereitet …', 'Kontrast und Schärfe optimieren');
+      const processedUrl = await preprocessCardImage(rawUrl);
+
       await ensureTesseract();
 
-      const setStatus = (title, sub) => {
-        const t = document.getElementById('sc-status-title');
-        const s = document.getElementById('sc-status-sub');
-        if (t) t.textContent = title;
-        if (s) s.textContent = sub;
-      };
+      setStatus('Sprachpaket wird geladen …', 'Einmalig ~3 MB, danach gecacht');
 
-      const { data } = await Tesseract.recognize(url, 'deu+eng', {
+      const worker = await Tesseract.createWorker('eng', 1, {
         logger: m => {
           if (m.status === 'loading language traineddata') {
             setStatus('Sprachpaket wird geladen …', `${Math.round((m.progress||0)*100)} %`);
@@ -1355,12 +1360,17 @@ const App = (() => {
         },
       });
 
+      // PSM 11 = Sparse text: best for business cards with mixed layout
+      await worker.setParameters({ tessedit_pageseg_mode: '11' });
+      const { data } = await worker.recognize(processedUrl);
+      await worker.terminate();
+
       const parsed = parseBusinessCard(data.text);
       const confidence = Math.round(data.confidence || 0);
 
       document.getElementById('sc-step2').style.display = 'none';
       document.getElementById('sc-step3').style.display = 'block';
-      document.getElementById('sc-thumb').src = url;
+      document.getElementById('sc-thumb').src = rawUrl;
       document.getElementById('sc-confidence').textContent =
         `Erkennungsrate ${confidence} % · Felder prüfen und ergänzen`;
 
@@ -1382,11 +1392,49 @@ const App = (() => {
     } catch (err) {
       document.getElementById('sc-step2').style.display = 'none';
       document.getElementById('sc-step3').style.display = 'block';
-      document.getElementById('sc-thumb').src = url;
+      document.getElementById('sc-thumb').src = rawUrl;
       document.getElementById('sc-confidence').textContent =
         'Erkennung nicht möglich – bitte manuell eingeben';
       showToast('OCR fehlgeschlagen – Daten manuell eingeben');
     }
+  }
+
+  function preprocessCardImage(blobUrl) {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => {
+        // Scale to max 1600px on the long side — large enough for OCR, not too slow
+        const MAX = 1600;
+        const scale = Math.min(1, MAX / Math.max(img.width, img.height));
+        const w = Math.round(img.width  * scale);
+        const h = Math.round(img.height * scale);
+
+        const canvas = document.createElement('canvas');
+        canvas.width  = w;
+        canvas.height = h;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, w, h);
+
+        const id = ctx.getImageData(0, 0, w, h);
+        const d  = id.data;
+
+        // Grayscale + contrast boost (factor ~1.6) + slight brightness lift
+        const CONTRAST = 1.6;
+        const BRIGHT   = 10;
+        for (let i = 0; i < d.length; i += 4) {
+          const gray = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
+          const c = Math.min(255, Math.max(0,
+            CONTRAST * (gray - 128) + 128 + BRIGHT
+          ));
+          d[i] = d[i + 1] = d[i + 2] = c;
+        }
+
+        ctx.putImageData(id, 0, 0);
+        resolve(canvas.toDataURL('image/png'));
+      };
+      img.onerror = reject;
+      img.src = blobUrl;
+    });
   }
 
   function ensureTesseract() {
@@ -1403,41 +1451,81 @@ const App = (() => {
   }
 
   function parseBusinessCard(text) {
-    const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 1);
+    // Normalize common OCR artifacts
+    const clean = text
+      .replace(/[|l](?=\d)/g, '1')   // l/| misread as 1 before digits
+      .replace(/\r\n/g, '\n');
+
+    const lines = clean.split('\n').map(l => l.trim()).filter(l => l.length > 1);
     const parsed = {};
 
-    // Email
-    const emailM = text.match(/[\w.+\-]+@[\w\-]+\.[\w.]+/);
+    // ── Email ─────────────────────────────────────────────────
+    const emailM = clean.match(/[\w.+\-]+@[\w.\-]+\.[a-zA-Z]{2,}/);
     if (emailM) parsed.email = emailM[0].toLowerCase();
 
-    // Phone – German formats
-    const phoneM = text.match(/(\+49|0049|(?<!\d)0)\s?[\d][\d\s\-\/()]{6,}/);
-    if (phoneM) parsed.phone = phoneM[0].replace(/\s+/g, ' ').trim();
-
-    // ZIP + city → address
-    const zipM = text.match(/\d{5}\s+[A-ZÄÖÜ][a-zäöüß\-]+/);
-    if (zipM) {
-      const zipLine = lines.find(l => l.includes(zipM[0]));
-      const zipIdx  = lines.indexOf(zipLine);
-      const prev = zipIdx > 0 ? lines[zipIdx - 1] : null;
-      parsed.address = (prev && /\d/.test(prev))
-        ? `${prev}, ${zipLine}`
-        : zipLine;
+    // ── Phone – handles +49, 0049, leading 0, brackets, dashes ─
+    const phoneM = clean.match(
+      /(\+49|0049)[\s\-]?(\(?\d{2,5}\)?[\s\-]?\d{3,}[\d\s\-]{2,})|(\(?\b0\d{2,5}\)?[\s\/\-]?\d{3,}[\d\s\-\/]{2,})/
+    );
+    if (phoneM) {
+      parsed.phone = phoneM[0].replace(/\s{2,}/g, ' ').trim().replace(/\s*[-\/]\s*/g, ' / ');
     }
 
-    // Name with academic title
-    const nameM = text.match(
-      /(?:Prof\.?\s*)?(?:Dr\.?\s*(?:med\.?\s*)?|Dr\.?\s*(?:rer\.?\s*nat\.?\s*)?)?([A-ZÄÖÜ][a-zäöüß]+)\s+([A-ZÄÖÜ][a-zäöüß\-]+)/
+    // ── ZIP code + city ───────────────────────────────────────
+    // Also handles OCR noise like "8O331" → fuzzy match for 5-digit groups
+    const zipM = clean.match(/[0-9O]{5}\s+[A-ZÄÖÜ][a-zäöüß\-]+/);
+    if (zipM) {
+      const zipFix  = zipM[0].replace(/O/g, '0');
+      const zipLine = lines.find(l => l.replace(/O/g,'0').includes(zipFix.split(' ')[0]));
+      if (zipLine) {
+        const zipIdx = lines.indexOf(zipLine);
+        const prev   = zipIdx > 0 ? lines[zipIdx - 1] : null;
+        parsed.address = (prev && /\d/.test(prev) && prev.length < 60)
+          ? `${prev}, ${zipLine.replace(/O/g,'0')}`
+          : zipLine.replace(/O/g,'0');
+      }
+    }
+
+    // ── Street without ZIP (fallback) ─────────────────────────
+    if (!parsed.address) {
+      const streetM = clean.match(
+        /[A-ZÄÖÜ][a-zäöüß]+(straße|str\.|weg|allee|platz|gasse|ring|damm)\s+\d+/i
+      );
+      if (streetM) parsed.address = streetM[0];
+    }
+
+    // ── Name: title + first + last ────────────────────────────
+    // Matches: Dr. / Dr. med. / Prof. Dr. / Dr. rer. nat. etc.
+    const titlePattern = /(?:(?:Prof\.?\s*)?(?:Dr\.?\s*(?:med\.?|rer\.?\s*nat\.?|phil\.?|ing\.?)?\s*))+/i;
+    const namePattern  = new RegExp(
+      titlePattern.source + '([A-ZÄÖÜ][a-zäöüß]{1,20}(?:-[A-ZÄÖÜ][a-zäöüß]+)?)\\s+([A-ZÄÖÜ][a-zäöüß]{2,30}(?:-[A-ZÄÖÜ][a-zäöüß]+)?)'
     );
+    const nameM = clean.match(namePattern);
     if (nameM) {
       parsed.first = nameM[1];
       parsed.last  = nameM[2];
+    } else {
+      // Fallback: two consecutive capitalized words on a standalone line
+      for (const line of lines) {
+        if (parsed.email && line.includes('@')) continue;
+        if (/^\d/.test(line)) continue;
+        const words = line.match(/\b[A-ZÄÖÜ][a-zäöüß]{2,}(?:-[A-ZÄÖÜ][a-zäöüß]+)?\b/g);
+        if (words && words.length >= 2 && words.length <= 4) {
+          parsed.first = words[0];
+          parsed.last  = words[words.length - 1];
+          break;
+        }
+      }
     }
 
-    // Practice/Institution keywords
-    const keywords = ['Praxis','Klinik','Krankenhaus','MVZ','Institut','Apotheke','Gemeinschaftspraxis','Universitätsklinik','Ambulanz'];
+    // ── Practice / institution ────────────────────────────────
+    const keywords = [
+      'Praxis','Klinik','Krankenhaus','MVZ','Medizinisches Versorgungszentrum',
+      'Institut','Apotheke','Gemeinschaftspraxis','Universitätsklinik','Ambulanz',
+      'Facharzt','Fachärztin','Ärztehaus','Gesundheitszentrum','Medical Center',
+    ];
     for (const line of lines) {
-      if (keywords.some(k => line.includes(k))) {
+      if (keywords.some(k => line.toLowerCase().includes(k.toLowerCase()))) {
         parsed.practice = line;
         break;
       }
