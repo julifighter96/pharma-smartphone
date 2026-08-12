@@ -1,5 +1,5 @@
 // Service Worker – minimal offline cache
-const CACHE = 'pharmaapp-v1';
+const CACHE = 'pharmaapp-v3';
 const PRECACHE = [
   '/', '/index.html',
   '/css/styles.css',

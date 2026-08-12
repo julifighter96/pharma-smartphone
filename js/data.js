@@ -4,6 +4,16 @@
 
 const DB = {
 
+  // ── Team (Außendienst-Kolleg:innen, für "Zuständiger AD" /
+  //    "Gesprächspartner" auf der Messe) ────────────────────
+  team: [
+    { id: 't1', name: 'Julian Reitermann', initials: 'JR' },
+    { id: 't2', name: 'Anna Vogel',        initials: 'AV' },
+    { id: 't3', name: 'Markus Weiß',       initials: 'MW' },
+    { id: 't4', name: 'Sophie Lindner',    initials: 'SL' },
+    { id: 't5', name: 'David Krause',      initials: 'DK' },
+  ],
+
   // ── Products ──────────────────────────────────────────────
   products: [
     { id: 'p1', name: 'Nexovit 10 mg', category: 'Kardiologie' },
@@ -225,6 +235,11 @@ const DB = {
       lastContact: '2026-04-17',
       potentialProducts: ['p1', 'p2', 'p3', 'p5'],
       notes: 'Größte Apotheke im Stadtgebiet. Hoher Umsatz.',
+      assignedRep: 'Julian Reitermann',
+      contacts: [
+        { id: 'ct1', salutation: 'Frau', first: 'Petra', last: 'Hoffstetter', role: 'Filialleitung', phone: '+49 89 22 44 55', email: 'p.hoffstetter@apotheke-marienplatz.de' },
+        { id: 'ct2', salutation: 'Herr', first: 'Tobias', last: 'Reimann', role: 'PTA', phone: '', email: '' },
+      ],
     },
     {
       id: 'c17', type: 'pharmacy', priority: 'A',
@@ -238,6 +253,10 @@ const DB = {
       lastContact: '2026-04-10',
       potentialProducts: ['p1', 'p6', 'p7'],
       notes: 'Sehr gutes Display für Aktionsprodukte.',
+      assignedRep: 'Anna Vogel',
+      contacts: [
+        { id: 'ct3', salutation: 'Herr', first: 'Michael', last: 'Brandner', role: 'Apotheker', phone: '+49 89 34 56 78', email: 'brandner@schwabing-apotheke.de' },
+      ],
     },
     {
       id: 'c18', type: 'pharmacy', priority: 'B',
@@ -251,6 +270,8 @@ const DB = {
       lastContact: '2026-04-06',
       potentialProducts: ['p3', 'p4'],
       notes: 'Interessiert an Sonderkonditionen für DermaClair.',
+      assignedRep: 'Markus Weiß',
+      contacts: [],
     },
     {
       id: 'c19', type: 'pharmacy', priority: 'B',
@@ -264,6 +285,10 @@ const DB = {
       lastContact: '2026-04-08',
       potentialProducts: ['p1', 'p2'],
       notes: 'Traditionell, gute Kundenbindung.',
+      assignedRep: 'Sophie Lindner',
+      contacts: [
+        { id: 'ct4', salutation: 'Frau', first: 'Claudia', last: 'Sailer', role: 'Filialleitung', phone: '+49 89 22 80 30', email: '' },
+      ],
     },
     {
       id: 'c20', type: 'pharmacy', priority: 'A',
@@ -277,6 +302,8 @@ const DB = {
       lastContact: '2026-04-16',
       potentialProducts: ['p1', 'p5', 'p7'],
       notes: 'Nahe Uni, viele junge Kunden. Gut für Neuprodukte.',
+      assignedRep: 'David Krause',
+      contacts: [],
     },
     {
       id: 'c21', type: 'pharmacy', priority: 'C',
@@ -290,6 +317,8 @@ const DB = {
       lastContact: '2026-03-20',
       potentialProducts: ['p4', 'p6'],
       notes: 'Kleiner Standort. Monatlicher Kontakt ausreichend.',
+      assignedRep: 'Julian Reitermann',
+      contacts: [],
     },
     {
       id: 'c22', type: 'pharmacy', priority: 'B',
@@ -303,6 +332,10 @@ const DB = {
       lastContact: '2026-04-11',
       potentialProducts: ['p3', 'p6'],
       notes: 'Engagiertes Team. Gute Lage nahe Praxis Hoffmann.',
+      assignedRep: 'Anna Vogel',
+      contacts: [
+        { id: 'ct5', salutation: 'Herr', first: 'Jonas', last: 'Peters', role: 'Apotheker', phone: '', email: 'peters@apotheke-haidhausen.de' },
+      ],
     },
   ],
 
@@ -373,7 +406,51 @@ const DB = {
     phone: '+49 176 12345678',
     quota: { target: 48, current: 31 },
   },
+
+  // ── Messe-Leads (erfasste Kontakte) ─────────────────────────
+  leads: [],
 };
+
+// ── Leads: Persistenz + Helpers ─────────────────────────────────
+
+const LEADS_STORAGE_KEY = 'pharmaapp_leads';
+
+DB.loadLeads = () => {
+  try {
+    const raw = localStorage.getItem(LEADS_STORAGE_KEY);
+    DB.leads = raw ? JSON.parse(raw) : [];
+  } catch (e) {
+    DB.leads = [];
+  }
+};
+
+DB.saveLeads = () => {
+  try {
+    localStorage.setItem(LEADS_STORAGE_KEY, JSON.stringify(DB.leads));
+  } catch (e) { /* storage unavailable – lead stays in memory only */ }
+};
+
+DB.addLead = (lead) => {
+  lead.id = 'lead' + Date.now();
+  lead.capturedAt = new Date().toISOString();
+  DB.leads.unshift(lead);
+  DB.saveLeads();
+  return lead;
+};
+
+DB.updateLeadSyncStatus = (id, status) => {
+  const l = DB.leads.find(l => l.id === id);
+  if (l) { l.syncStatus = status; DB.saveLeads(); }
+  return l;
+};
+
+DB.updateLead = (id, patch) => {
+  const l = DB.leads.find(l => l.id === id);
+  if (l) { Object.assign(l, patch); DB.saveLeads(); }
+  return l;
+};
+
+DB.loadLeads();
 
 // ── Helper functions ──────────────────────────────────────────
 
@@ -398,6 +475,69 @@ DB.searchCustomers = (query) => {
     c.specialty.toLowerCase().includes(q) ||
     c.address.toLowerCase().includes(q)
   );
+};
+
+DB.searchInstitutions = (query) => {
+  const q = query.toLowerCase();
+  return DB.customers.filter(c => c.type === 'pharmacy' && (
+    c.name.toLowerCase().includes(q) ||
+    c.address.toLowerCase().includes(q)
+  ));
+};
+
+// ── Bundesland-Zuordnung anhand PLZ (Näherung über PLZ-Präfix-Bereiche) ──
+
+DB.BUNDESLAENDER = [
+  'Baden-Württemberg', 'Bayern', 'Berlin', 'Brandenburg', 'Bremen',
+  'Hamburg', 'Hessen', 'Mecklenburg-Vorpommern', 'Niedersachsen',
+  'Nordrhein-Westfalen', 'Rheinland-Pfalz', 'Saarland', 'Sachsen',
+  'Sachsen-Anhalt', 'Schleswig-Holstein', 'Thüringen',
+];
+
+// [von, bis, Bundesland] auf Basis der ersten beiden PLZ-Ziffern.
+// Näherung – an einigen Grenzbereichen (z.B. 3x, 4x) mischen sich
+// Bundesländer kleinräumiger, als sich mit einer 2-stelligen
+// Präfix-Tabelle abbilden lässt. Deshalb bleibt das Feld im Formular
+// änderbar, statt die Auswahl zu sperren.
+const PLZ_BUNDESLAND_RANGES = [
+  [1, 2,  'Sachsen'],
+  [3, 3,  'Brandenburg'],
+  [4, 4,  'Sachsen'],
+  [6, 6,  'Sachsen-Anhalt'],
+  [7, 7,  'Thüringen'],
+  [8, 9,  'Sachsen'],
+  [10, 13, 'Berlin'],
+  [14, 16, 'Brandenburg'],
+  [17, 19, 'Mecklenburg-Vorpommern'],
+  [20, 22, 'Hamburg'],
+  [23, 25, 'Schleswig-Holstein'],
+  [26, 27, 'Niedersachsen'],
+  [28, 28, 'Bremen'],
+  [29, 31, 'Niedersachsen'],
+  [32, 33, 'Nordrhein-Westfalen'],
+  [34, 36, 'Hessen'],
+  [37, 38, 'Niedersachsen'],
+  [39, 39, 'Sachsen-Anhalt'],
+  [40, 48, 'Nordrhein-Westfalen'],
+  [49, 49, 'Niedersachsen'],
+  [50, 53, 'Nordrhein-Westfalen'],
+  [54, 56, 'Rheinland-Pfalz'],
+  [57, 59, 'Nordrhein-Westfalen'],
+  [60, 65, 'Hessen'],
+  [66, 66, 'Saarland'],
+  [67, 67, 'Rheinland-Pfalz'],
+  [68, 69, 'Baden-Württemberg'],
+  [70, 79, 'Baden-Württemberg'],
+  [80, 89, 'Bayern'],
+  [90, 97, 'Bayern'],
+  [98, 99, 'Thüringen'],
+];
+
+DB.guessBundesland = (plz) => {
+  const prefix = parseInt(String(plz).trim().slice(0, 2), 10);
+  if (isNaN(prefix)) return '';
+  const hit = PLZ_BUNDESLAND_RANGES.find(([from, to]) => prefix >= from && prefix <= to);
+  return hit ? hit[2] : '';
 };
 
 DB.getProductName = (id) => {
