@@ -358,8 +358,17 @@ img { max-width: 100%; }
 .visit-rating { font-size: 18px; flex-shrink: 0; }
 
 /* ── 14. CAPTURE FLOW (Messe-Erfassung) ──────────────────── */
-.capture-view { padding: var(--sp-md); padding-bottom: calc(var(--sp-xl) + var(--safe-b) + 20px); }
+/* Scrollable step content + a footer that's always pinned to the
+   same spot at the bottom, regardless of how tall the step is. */
+.capture-view { display: flex; flex-direction: column; height: 100%; }
+.capture-scroll { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: var(--sp-md); }
 .capture-step { display: flex; flex-direction: column; }
+.capture-footer {
+  flex-shrink: 0;
+  padding: var(--sp-sm) var(--sp-md) calc(var(--sp-sm) + var(--safe-b));
+  background: var(--clr-surface);
+  border-top: 1px solid var(--clr-outline-var);
+}
 
 .stepper { display: flex; align-items: flex-start; margin-bottom: var(--sp-lg); }
 .step-dot-wrap { display: flex; flex-direction: column; align-items: center; flex: 1; gap: 6px; }
@@ -412,6 +421,25 @@ img { max-width: 100%; }
 }
 .info-chip .mi { font-size: 15px; }
 
+.notes-input-wrap { position: relative; }
+.notes-input-wrap textarea { padding-right: 48px; }
+.mic-btn {
+  position: absolute; right: 8px; bottom: 8px;
+  width: 34px; height: 34px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--clr-surface-var); color: var(--clr-on-surface-var);
+  transition: background .15s var(--ease), color .15s var(--ease);
+}
+.mic-btn:active { background: var(--clr-primary-container); }
+.mic-btn.active {
+  background: var(--clr-error); color: #fff;
+  animation: micPulse 1.2s ease-in-out infinite;
+}
+@keyframes micPulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(179,38,30,.35); }
+  50%      { box-shadow: 0 0 0 8px rgba(179,38,30,0); }
+}
+
 .compliance-hint {
   display: flex; align-items: flex-start; gap: 6px;
   font-size: 11px; color: var(--clr-on-surface-var);
@@ -426,15 +454,10 @@ img { max-width: 100%; }
 }
 .consent-row input { margin-top: 2px; flex-shrink: 0; width: 18px; height: 18px; }
 
-.type-badge.new      { background: var(--clr-doctor-bg);   color: var(--clr-doctor); }
-.type-badge.existing { background: var(--clr-pharmacy-bg); color: var(--clr-pharmacy); }
-.quality-badge {
-  padding: 2px 8px; border-radius: var(--r-full);
-  font-size: 10px; font-weight: 700; white-space: nowrap;
-}
-.quality-badge.quality-heiss { background: #FDECEA; color: var(--clr-error); }
-.quality-badge.quality-warm  { background: #FFF4DE; color: var(--clr-warning); }
-.quality-badge.quality-kalt  { background: var(--clr-surface-var); color: var(--clr-on-surface-var); }
+.type-badge.custtype-bestand   { background: var(--clr-pharmacy-bg); color: var(--clr-pharmacy); }
+.type-badge.custtype-neu       { background: var(--clr-doctor-bg);   color: var(--clr-doctor); }
+.type-badge.custtype-qualified { background: #FFF4DE; color: var(--clr-warning); }
+.type-badge.custtype-kontakt   { background: var(--clr-surface-var); color: var(--clr-on-surface-var); }
 .sync-icon { font-size: 18px; }
 .sync-icon.synced { color: var(--clr-success); }
 .sync-icon.draft  { color: var(--clr-warning); }
@@ -627,7 +650,7 @@ textarea.form-input { min-height: 90px; resize: none; line-height: 1.5; }
 .empty-state p { font-size: 14px; color: var(--clr-on-surface-var); }
 
 /* View transition */
-.view-enter { animation: viewIn .22s var(--ease); }
+.view-enter { height: 100%; animation: viewIn .22s var(--ease); }
 @keyframes viewIn { from { opacity:0; transform:translateY(8px) } to { opacity:1; transform:none } }
 
 /* ── 22. RESPONSIVE (tablet / iPad / desktop preview) ────── */
@@ -638,7 +661,7 @@ textarea.form-input { min-height: 90px; resize: none; line-height: 1.5; }
   /* .detail-view keeps 0 side padding on purpose — its hero band is
      full-bleed to the app-shell edge; every other view already uses
      inset rounded cards, so widening their padding is safe. */
-  .capture-view, .cust-list, .profile-view {
+  .capture-scroll, .capture-footer, .cust-list, .profile-view {
     padding-left: var(--sp-lg); padding-right: var(--sp-lg);
   }
   #searchbar { padding-left: var(--sp-lg); padding-right: var(--sp-lg); }

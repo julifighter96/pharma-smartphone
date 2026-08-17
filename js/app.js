@@ -11,16 +11,22 @@ const App = (() => {
   let tmpSalutation = 'Herr';
   let tmpRole = '';
 
-  // ── Action / quality vocab ────────────────────────────────
+  // ── Action vocab ────────────────────────────────────────────
   const ACTIONS = [
-    { key: 'muster',      label: 'Muster übergeben',   icon: 'medication' },
-    { key: 'katalog',     label: 'Katalogwunsch',      icon: 'menu_book' },
-    { key: 'folgetermin', label: 'Folgetermin',        icon: 'calendar_add_on' },
-    { key: 'auftrag',     label: 'Auftrag',            icon: 'shopping_cart' },
-    { key: 'info',        label: 'Nur Info',           icon: 'info' },
+    { key: 'auftrag',   label: 'Auftrag',           icon: 'shopping_cart' },
+    { key: 'katalog',   label: 'Katalog zusenden',  icon: 'menu_book' },
+    { key: 'sonstiges', label: 'Sonstiges',         icon: 'more_horiz' },
   ];
   const ACTION_LABELS = Object.fromEntries(ACTIONS.map(a => [a.key, a.label]));
-  const QUALITY_LABELS = { heiss: 'Heiß', warm: 'Warm', kalt: 'Kalt' };
+
+  // ── Kundentyp vocab ───────────────────────────────────────
+  const CUSTTYPES = [
+    { key: 'bestand',   label: 'Bestandskunde' },
+    { key: 'neu',       label: 'Neukunde' },
+    { key: 'qualified', label: 'Qual. Lead' },
+    { key: 'kontakt',   label: 'Kontakt' },
+  ];
+  const CUSTTYPE_LABELS = Object.fromEntries(CUSTTYPES.map(c => [c.key, c.label]));
 
   // ── Approved-Mail-Vorschläge (Abschluss-Screen nach dem Speichern) ──
   const MAIL_SUGGESTIONS = [
@@ -38,16 +44,15 @@ const App = (() => {
       institution: null,       // { id, name, address, assignedRep, contacts }
       contact: null,           // { id, salutation, first, last, role, phone, email }
       contactSkipped: false,
-      custType: 'bestand',     // 'bestand' | 'neu'
-      leadQuality: 'warm',     // 'heiss' | 'warm' | 'kalt'
-      brands: [],
+      custType: 'bestand',     // 'bestand' | 'neu' | 'qualified' | 'kontakt'
+      dsgvoSigned: false,      // nur relevant bei custType === 'kontakt'
+      brandType: null,         // null | 'marke' | 'eigenmarke'
       actions: [],
-      followUpDate: '',
-      followUpTime: '',
       secondaryRep: '',
       notes: '',
-      formFilled: false,
-      consent: false,
+      appointmentDate: '',
+      appointmentTime: '',
+      outlookEntered: false,
     };
   }
 
@@ -151,7 +156,7 @@ const App = (() => {
   // CAPTURE FLOW – shell + stepper
   // ═══════════════════════════════════════════════════════════
   function captureTitle() {
-    const titles = ['', 'Apotheke finden', 'Ansprechpartner', 'Details erfassen', 'Formular & Einwilligung'];
+    const titles = ['', 'Apotheke finden', 'Ansprechpartner', 'Details erfassen', 'Termin'];
     return titles[state.capture.step] || 'Erfassen';
   }
 
@@ -164,11 +169,42 @@ const App = (() => {
       case 4: body = renderCaptureStep4(); break;
       default: body = renderCaptureStep1();
     }
-    return `<div class="capture-view">${renderStepper()}${body}</div>`;
+    return `
+    <div class="capture-view">
+      <div class="capture-scroll">
+        ${renderStepper()}
+        ${body}
+      </div>
+      ${renderCaptureButtons()}
+    </div>`;
+  }
+
+  // Immer an derselben Stelle unten fixiert, unabhängig davon, wie viel
+  // Inhalt der jeweilige Schritt hat.
+  function renderCaptureButtons() {
+    const step = state.capture.step;
+    if (step === 1) return '';
+    if (step === 2) {
+      return `<div class="btn-row capture-footer">
+        <button class="btn btn-outline" onclick="App.prevCaptureStep()">Zurück</button>
+      </div>`;
+    }
+    if (step === 3) {
+      return `<div class="btn-row capture-footer">
+        <button class="btn btn-outline" onclick="App.prevCaptureStep()">Zurück</button>
+        <button class="btn btn-primary" onclick="App.goToCaptureStep(4)">Weiter</button>
+      </div>`;
+    }
+    return `<div class="btn-row capture-footer">
+      <button class="btn btn-outline" onclick="App.prevCaptureStep()">Zurück</button>
+      <button class="btn btn-primary" onclick="App.saveLead()">
+        <span class="mi">save</span> Speichern
+      </button>
+    </div>`;
   }
 
   function renderStepper() {
-    const labels = ['Apotheke', 'Ansprechpartner', 'Details', 'Formular'];
+    const labels = ['Apotheke', 'Ansprechpartner', 'Details', 'Termin'];
     const cur = state.capture.step;
     return `
     <div class="stepper">
@@ -288,10 +324,6 @@ const App = (() => {
       <button class="btn btn-tonal ${state.capture.contactSkipped ? 'sel' : ''}" style="width:100%;margin-top:8px" onclick="App.skipContact()">
         <span class="mi">skip_next</span> Später anlegen${state.capture.contactSkipped ? ' ✓' : ''}
       </button>
-
-      <div class="btn-row" style="margin-top:16px">
-        <button class="btn btn-outline" onclick="App.prevCaptureStep()">Zurück</button>
-      </div>
     </div>`;
   }
 
@@ -474,20 +506,19 @@ const App = (() => {
 
       <div class="form-section-hd">Kundentyp</div>
       <div class="prod-chips" id="cap-custtype-group">
-        <div class="prod-chip ${cap.custType==='bestand'?'sel':''}" data-val="bestand" onclick="App.setCustType('bestand')">Bestandskunde</div>
-        <div class="prod-chip ${cap.custType==='neu'?'sel':''}" data-val="neu" onclick="App.setCustType('neu')">Neukunde</div>
+        ${CUSTTYPES.map(c => `<div class="prod-chip ${cap.custType===c.key?'sel':''}" data-val="${c.key}" onclick="App.setCustType('${c.key}')">${c.label}</div>`).join('')}
       </div>
 
-      <div class="form-section-hd">Lead-Qualität</div>
-      <div class="prod-chips" id="cap-quality-group">
-        <div class="prod-chip ${cap.leadQuality==='heiss'?'sel':''}" data-val="heiss" onclick="App.setLeadQuality('heiss')">🔥 Heiß</div>
-        <div class="prod-chip ${cap.leadQuality==='warm'?'sel':''}" data-val="warm" onclick="App.setLeadQuality('warm')">🌤️ Warm</div>
-        <div class="prod-chip ${cap.leadQuality==='kalt'?'sel':''}" data-val="kalt" onclick="App.setLeadQuality('kalt')">❄️ Kalt</div>
-      </div>
+      ${cap.custType === 'kontakt' ? `
+      <div class="form-section-hd">DSGVO</div>
+      <div class="prod-chips" id="cap-dsgvo-group">
+        <div class="prod-chip ${cap.dsgvoSigned?'sel':''}" onclick="App.toggleDsgvoSigned()">DSGVO unterschrieben</div>
+      </div>` : ''}
 
-      <div class="form-section-hd">Marke / Eigenmarke</div>
-      <div class="prod-chips" id="cap-brands-group">
-        ${DB.products.map(p => `<div class="prod-chip ${cap.brands.includes(p.id)?'sel':''}" onclick="App.toggleBrand('${p.id}', this)">${p.name}</div>`).join('')}
+      <div class="form-section-hd">Marke</div>
+      <div class="prod-chips" id="cap-brandtype-group">
+        <div class="prod-chip ${cap.brandType==='marke'?'sel':''}" data-val="marke" onclick="App.setBrandType('marke')">Marke</div>
+        <div class="prod-chip ${cap.brandType==='eigenmarke'?'sel':''}" data-val="eigenmarke" onclick="App.setBrandType('eigenmarke')">Eigenmarke</div>
       </div>
 
       <div class="form-section-hd">Aktionstyp</div>
@@ -501,28 +532,15 @@ const App = (() => {
           </label>`).join('')}
       </div>
 
-      ${cap.actions.includes('folgetermin') ? `
-      <div class="form-section-hd">Folgetermin</div>
-      <div class="form-row">
-        <div class="form-group">
-          <label class="form-label">Datum</label>
-          <input type="date" class="form-input" id="cap-fu-date" value="${cap.followUpDate}" onchange="App.setFollowUp('date', this.value)">
-        </div>
-        <div class="form-group">
-          <label class="form-label">Uhrzeit</label>
-          <input type="time" class="form-input" id="cap-fu-time" value="${cap.followUpTime}" onchange="App.setFollowUp('time', this.value)">
-        </div>
-      </div>` : ''}
-
       <div class="form-group">
         <label class="form-label">Notizen (optional)</label>
-        <textarea class="form-input" id="cap-notes" placeholder="Kurzstichpunkte …" oninput="App.setNotes(this.value)">${cap.notes}</textarea>
+        <div class="notes-input-wrap">
+          <textarea class="form-input" id="cap-notes" placeholder="Kurzstichpunkte … oder Mikrofon für Spracheingabe" oninput="App.setNotes(this.value)">${cap.notes}</textarea>
+          <button type="button" class="mic-btn" id="cap-notes-mic" onclick="App.toggleVoiceNotes()" title="Spracheingabe">
+            <span class="mi">mic</span>
+          </button>
+        </div>
         <p class="compliance-hint"><span class="mi">info</span> Bitte keine Gesundheitsdaten Dritter oder werbliche Heilversprechen im Freitext notieren.</p>
-      </div>
-
-      <div class="btn-row">
-        <button class="btn btn-outline" onclick="App.prevCaptureStep()">Zurück</button>
-        <button class="btn btn-primary" onclick="App.goToCaptureStep(4)">Weiter</button>
       </div>
     </div>`;
   }
@@ -531,81 +549,110 @@ const App = (() => {
 
   function setCustType(v) {
     state.capture.custType = v;
-    document.querySelectorAll('#cap-custtype-group .prod-chip').forEach(el => el.classList.toggle('sel', el.dataset.val === v));
+    renderView(); // die DSGVO-Kategorie wird nur bei "Kontakt" ein-/ausgeblendet
   }
 
-  function setLeadQuality(v) {
-    state.capture.leadQuality = v;
-    document.querySelectorAll('#cap-quality-group .prod-chip').forEach(el => el.classList.toggle('sel', el.dataset.val === v));
+  function toggleDsgvoSigned() {
+    state.capture.dsgvoSigned = !state.capture.dsgvoSigned;
+    document.querySelectorAll('#cap-dsgvo-group .prod-chip').forEach(el => el.classList.toggle('sel', state.capture.dsgvoSigned));
   }
 
-  function toggleBrand(pid, el) {
-    const i = state.capture.brands.indexOf(pid);
-    if (i === -1) { state.capture.brands.push(pid); el.classList.add('sel'); }
-    else { state.capture.brands.splice(i, 1); el.classList.remove('sel'); }
+  function setBrandType(v) {
+    state.capture.brandType = v;
+    document.querySelectorAll('#cap-brandtype-group .prod-chip').forEach(el => el.classList.toggle('sel', el.dataset.val === v));
   }
 
   function toggleAction(key, checked) {
     const i = state.capture.actions.indexOf(key);
     if (checked && i === -1) state.capture.actions.push(key);
     else if (!checked && i !== -1) state.capture.actions.splice(i, 1);
-    renderView(); // follow-up date fields depend on this
-  }
-
-  function setFollowUp(field, val) {
-    if (field === 'date') state.capture.followUpDate = val;
-    else state.capture.followUpTime = val;
   }
 
   function setNotes(v) { state.capture.notes = v; }
 
+  // ── Spracheingabe für Notizen (Web Speech API, mit Textfallback) ──
+  let voiceRecognition = null;
+  let voiceActive = false;
+
+  function toggleVoiceNotes() {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) { showToast('Spracheingabe wird von diesem Browser nicht unterstützt – bitte Text eingeben'); return; }
+
+    if (voiceActive) {
+      voiceRecognition && voiceRecognition.stop();
+      return;
+    }
+
+    const btn = document.getElementById('cap-notes-mic');
+    const textarea = document.getElementById('cap-notes');
+
+    voiceRecognition = new SR();
+    voiceRecognition.lang = 'de-DE';
+    voiceRecognition.continuous = true;
+    voiceRecognition.interimResults = false;
+
+    voiceRecognition.onstart = () => {
+      voiceActive = true;
+      if (btn) btn.classList.add('active');
+    };
+    voiceRecognition.onresult = (e) => {
+      let transcript = '';
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        if (e.results[i].isFinal) transcript += e.results[i][0].transcript;
+      }
+      if (transcript.trim() && textarea) {
+        const sep = textarea.value && !/[\s\n]$/.test(textarea.value) ? ' ' : '';
+        textarea.value += sep + transcript.trim();
+        state.capture.notes = textarea.value;
+      }
+    };
+    voiceRecognition.onerror = () => showToast('Spracheingabe fehlgeschlagen');
+    voiceRecognition.onend = () => {
+      voiceActive = false;
+      if (btn) btn.classList.remove('active');
+    };
+
+    try { voiceRecognition.start(); }
+    catch (err) { showToast('Spracheingabe konnte nicht gestartet werden'); }
+  }
+
   // ═══════════════════════════════════════════════════════════
-  // STEP 4 – FORMULAR & EINWILLIGUNG
+  // STEP 4 – TERMIN
   // ═══════════════════════════════════════════════════════════
   function renderCaptureStep4() {
     const cap = state.capture;
-    if (cap.custType !== 'neu') {
-      return `
-      <div class="capture-step">
-        <div class="empty-state">
-          <span class="mi">verified_user</span>
-          <h3>Bestandskunde</h3>
-          <p>Einwilligung liegt bereits vor – kein weiterer Nachweis nötig.</p>
-        </div>
-        <div class="btn-row">
-          <button class="btn btn-outline" onclick="App.prevCaptureStep()">Zurück</button>
-          <button class="btn btn-primary" onclick="App.saveLead()">
-            <span class="mi">save</span> Speichern
-          </button>
-        </div>
-      </div>`;
-    }
 
     return `
     <div class="capture-step">
-      <p class="section-title" style="margin-bottom:10px">Formular &amp; Einwilligung</p>
+      <p class="section-title" style="margin-bottom:10px">Termin</p>
 
-      <label class="consent-row">
-        <input type="checkbox" id="cap-form-flag" ${cap.formFilled ? 'checked' : ''} onchange="App.setFormFlag(this.checked)">
-        <span>Formular ausgefüllt (Kennzeichen – Papierformular liegt vor, wird nicht digitalisiert)</span>
-      </label>
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label">Datum</label>
+          <input type="date" class="form-input" id="cap-appt-date" value="${cap.appointmentDate}" onchange="App.setAppointment('date', this.value)">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Uhrzeit</label>
+          <input type="time" class="form-input" id="cap-appt-time" value="${cap.appointmentTime}" onchange="App.setAppointment('time', this.value)">
+        </div>
+      </div>
 
-      <label class="consent-row">
-        <input type="checkbox" id="cap-consent" ${cap.consent ? 'checked' : ''} onchange="App.setConsent(this.checked)">
-        <span>Einwilligung (DSGVO) eingeholt – der/die Ansprechpartner:in hat der Verarbeitung der Kontaktdaten zu Marketingzwecken zugestimmt.</span>
-      </label>
-
-      <div class="btn-row">
-        <button class="btn btn-outline" onclick="App.prevCaptureStep()">Zurück</button>
-        <button class="btn btn-primary" onclick="App.saveLead()">
-          <span class="mi">save</span> Speichern
-        </button>
+      <div class="form-section-hd">Outlook</div>
+      <div class="prod-chips" id="cap-outlook-group">
+        <div class="prod-chip ${cap.outlookEntered?'sel':''}" onclick="App.toggleOutlookEntered()">In Outlook eingetragen</div>
       </div>
     </div>`;
   }
 
-  function setFormFlag(v) { state.capture.formFilled = v; }
-  function setConsent(v) { state.capture.consent = v; }
+  function setAppointment(field, val) {
+    if (field === 'date') state.capture.appointmentDate = val;
+    else state.capture.appointmentTime = val;
+  }
+
+  function toggleOutlookEntered() {
+    state.capture.outlookEntered = !state.capture.outlookEntered;
+    document.querySelectorAll('#cap-outlook-group .prod-chip').forEach(el => el.classList.toggle('sel', state.capture.outlookEntered));
+  }
 
   // ═══════════════════════════════════════════════════════════
   // SAVE LEAD + OFFLINE SYNC
@@ -613,13 +660,6 @@ const App = (() => {
   function saveLead() {
     const cap = state.capture;
     if (!cap.institution) { showToast('Bitte zuerst eine Apotheke wählen'); return; }
-
-    if (cap.custType === 'neu') {
-      const formEl = document.getElementById('cap-form-flag');
-      if (!formEl || !formEl.checked) { showToast('Bitte "Formular ausgefüllt" bestätigen'); return; }
-      const consentEl = document.getElementById('cap-consent');
-      if (!consentEl || !consentEl.checked) { showToast('Bitte Einwilligung bestätigen'); return; }
-    }
 
     let institutionId = cap.institution.id;
     const assignedRep = cap.institution.assignedRep || DB.rep.name;
@@ -650,18 +690,19 @@ const App = (() => {
       institutionId,
       institutionName: cap.institution.name,
       address: cap.institution.address,
+      custType: cap.custType,
       isNewCustomer: cap.custType === 'neu',
+      dsgvoSigned: cap.custType === 'kontakt' ? !!cap.dsgvoSigned : null,
       contact: cap.contact,
       contactSkipped: cap.contactSkipped,
       assignedRep,
       secondaryRep: cap.secondaryRep || null,
-      leadQuality: cap.leadQuality,
-      brands: [...cap.brands],
+      brandType: cap.brandType,
       actions: [...cap.actions],
-      followUp: cap.actions.includes('folgetermin') ? { date: cap.followUpDate, time: cap.followUpTime } : null,
       notes: cap.notes,
-      formFilled: cap.custType === 'neu' ? !!cap.formFilled : null,
-      consentGiven: true,
+      appointmentDate: cap.appointmentDate || null,
+      appointmentTime: cap.appointmentTime || null,
+      outlookEntered: !!cap.outlookEntered,
       suggestedMails: [],
       syncStatus: navigator.onLine ? 'synced' : 'draft',
     };
@@ -704,7 +745,7 @@ const App = (() => {
     if (lead.isNewCustomer) s.push('welcome');
     if (lead.actions.includes('katalog')) s.push('pricelist');
     if (lead.actions.includes('auftrag')) s.push('closing');
-    if (lead.actions.includes('folgetermin')) s.push('appointment');
+    if (lead.appointmentDate) s.push('appointment');
     return s;
   }
 
@@ -802,8 +843,7 @@ const App = (() => {
         <div class="cust-addr">${l.address}</div>
       </div>
       <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px;flex-shrink:0">
-        <span class="type-badge ${l.isNewCustomer ? 'new' : 'existing'}">${l.isNewCustomer ? 'Neu' : 'Bestand'}</span>
-        <span class="quality-badge quality-${l.leadQuality}">${QUALITY_LABELS[l.leadQuality] || '–'}</span>
+        <span class="type-badge custtype-${l.custType}">${CUSTTYPE_LABELS[l.custType] || l.custType}</span>
         <span class="mi sync-icon ${l.syncStatus}">${l.syncStatus === 'synced' ? 'check_circle' : 'schedule'}</span>
       </div>
     </div>`;
@@ -822,8 +862,7 @@ const App = (() => {
     <div class="detail-view">
       <div class="detail-hero">
         <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
-          <span class="type-badge ${l.isNewCustomer?'new':'existing'}">${l.isNewCustomer?'Neukunde':'Bestandskunde'}</span>
-          <span class="quality-badge quality-${l.leadQuality}">${QUALITY_LABELS[l.leadQuality]||'–'}</span>
+          <span class="type-badge custtype-${l.custType}">${CUSTTYPE_LABELS[l.custType] || l.custType}</span>
         </div>
         <div class="detail-hero-name">${name}</div>
         <div class="detail-hero-spec">${l.institutionName}</div>
@@ -853,13 +892,12 @@ const App = (() => {
         <div class="detail-row"><span class="mi">event</span><div><div class="dr-label">Erfasst am</div><div class="dr-value">${capturedStr}</div></div></div>
         <div class="detail-row"><span class="mi">badge</span><div><div class="dr-label">Zuständiger AD</div><div class="dr-value">${l.assignedRep}</div></div></div>
         ${l.secondaryRep ? `<div class="detail-row"><span class="mi">group</span><div><div class="dr-label">Gesprächspartner</div><div class="dr-value">${l.secondaryRep}</div></div></div>` : ''}
-        ${l.followUp ? `<div class="detail-row"><span class="mi">calendar_add_on</span><div><div class="dr-label">Folgetermin</div><div class="dr-value">${l.followUp.date}${l.followUp.time ? ' · ' + l.followUp.time + ' Uhr' : ''}</div></div></div>` : ''}
       </div>
 
-      ${l.brands.length ? `
+      ${l.brandType ? `
       <div class="detail-section">
-        <div class="detail-section-hd">Marke / Eigenmarke</div>
-        <div class="visit-products" style="margin-top:4px">${l.brands.map(pid => `<span class="visit-prod-tag">${DB.getProductName(pid)}</span>`).join('')}</div>
+        <div class="detail-section-hd">Marke</div>
+        <div class="visit-products" style="margin-top:4px"><span class="visit-prod-tag">${l.brandType === 'marke' ? 'Marke' : 'Eigenmarke'}</span></div>
       </div>` : ''}
 
       ${l.actions.length ? `
@@ -874,16 +912,22 @@ const App = (() => {
         <p style="font-size:14px;line-height:1.6;color:var(--clr-on-surface)">${l.notes}</p>
       </div>` : ''}
 
-      ${l.formFilled !== null ? `
+      ${l.dsgvoSigned !== null ? `
       <div class="detail-section">
-        <div class="detail-section-hd">Formular &amp; Einwilligung</div>
+        <div class="detail-section-hd">DSGVO</div>
         <div class="detail-row">
-          <span class="mi">${l.formFilled ? 'check_circle' : 'radio_button_unchecked'}</span>
-          <div><div class="dr-label">Formular</div><div class="dr-value">${l.formFilled ? 'Ausgefüllt' : 'Nicht markiert'}</div></div>
+          <span class="mi">${l.dsgvoSigned ? 'check_circle' : 'radio_button_unchecked'}</span>
+          <div><div class="dr-label">DSGVO</div><div class="dr-value">${l.dsgvoSigned ? 'Unterschrieben' : 'Nicht markiert'}</div></div>
         </div>
+      </div>` : ''}
+
+      ${(l.appointmentDate || l.outlookEntered) ? `
+      <div class="detail-section">
+        <div class="detail-section-hd">Termin</div>
+        ${l.appointmentDate ? `<div class="detail-row"><span class="mi">event</span><div><div class="dr-label">Datum</div><div class="dr-value">${l.appointmentDate}${l.appointmentTime ? ' · ' + l.appointmentTime + ' Uhr' : ''}</div></div></div>` : ''}
         <div class="detail-row">
-          <span class="mi">${l.consentGiven ? 'check_circle' : 'radio_button_unchecked'}</span>
-          <div><div class="dr-label">DSGVO</div><div class="dr-value">${l.consentGiven ? 'Einwilligung eingeholt' : 'Nicht markiert'}</div></div>
+          <span class="mi">${l.outlookEntered ? 'check_circle' : 'radio_button_unchecked'}</span>
+          <div><div class="dr-label">Outlook</div><div class="dr-value">${l.outlookEntered ? 'In Outlook eingetragen' : 'Noch nicht eingetragen'}</div></div>
         </div>
       </div>` : ''}
 
@@ -1243,13 +1287,13 @@ const App = (() => {
     saveNewContact,
     setSecondaryRep,
     setCustType,
-    setLeadQuality,
-    toggleBrand,
+    toggleDsgvoSigned,
+    setBrandType,
     toggleAction,
-    setFollowUp,
     setNotes,
-    setFormFlag,
-    setConsent,
+    toggleVoiceNotes,
+    setAppointment,
+    toggleOutlookEntered,
     saveLead,
 
     // wrapup
